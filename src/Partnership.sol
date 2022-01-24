@@ -4,6 +4,8 @@ pragma solidity 0.8.11;
 import {ERC20} from "@solmate/tokens/ERC20.sol";
 import {FixedPointMathLib} from "@solmate/utils/FixedPointMathLib.sol";
 
+error AlreadyDeposited();
+
 /// @title Strategic Partnership
 /// @author Austin Green
 /// @notice Factory for creating and managing Strategic Partnerships.
@@ -48,7 +50,7 @@ contract Partnership {
     uint256 public immutable totalAllocated;
 
     /*///////////////////////////////////////////////////////////////
-                               VARIABLES
+                               STORAGE
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Approved partners
@@ -84,8 +86,8 @@ contract Partnership {
     /// @param _fundingToken The token partners exchange for the nativeToken.
     /// @param _exchangeRate Number of fundingTokens required for 1 nativeToken
     /// @param _fundingPeriod The time period in which partners can invest.
-    /// @param _timeUntilCliff The timestamp when vesting begins.
-    /// @param _vestingPeriod The duration of vesting.
+    /// @param _timeUntilCliff The duration between fundingDeadline and vesting cliff.
+    /// @param _vestingPeriod The duration between vesting cliff and fully vested.
     /// @param _partners Addresses that can participate.
     /// @param _allocations Max amount that partners can invest.
     /// @param _depositor Account that will be depositing the native token.
@@ -138,12 +140,12 @@ contract Partnership {
         _;
     }
 
+    /// @notice Depositor calls this function to deposit natice tokens and begin the funding period. Can only be called once.
+    /// @dev Assumes depositor has approved this contract to sepnd at least the depositAmount.
     function initializeDeposit() external onlyDepositor {
-        require(vestingStartDate == 0, "Deposit already complete");
+        if (vestingStartDate != 0) revert AlreadyDeposited();
         vestingStartDate = block.timestamp + fundingPeriod;
         uint256 depositAmount = totalAllocated.fdiv(exchangeRate, 100);
-
-        /// @dev Assumes depositor has approved this contract for depositAmount
         nativeToken.transferFrom(depositor, address(this), depositAmount);
         emit Deposited();
     }
