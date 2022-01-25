@@ -4,6 +4,7 @@ pragma solidity 0.8.11;
 import {ERC20} from "@solmate/tokens/ERC20.sol";
 
 import "ds-test/test.sol";
+import {console} from "./utils/console.sol";
 import "../Partnership.sol";
 
 interface Vm {
@@ -13,6 +14,10 @@ interface Vm {
         bool,
         bool
     ) external;
+
+    function startPrank(address) external;
+
+    function stopPrank() external;
 }
 
 contract PartnershipTest is DSTest {
@@ -22,8 +27,10 @@ contract PartnershipTest is DSTest {
         ERC20(0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F);
     ERC20 public constant USDC =
         ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
+    address public constant GTC_TIMELOCK =
+        0x57a8865cfB1eCEf7253c27da6B4BC3dAEE5Be518;
     uint256 public constant EXCHANGE_RATE = 20;
-    uint256 public constant FUNDING_PERIOD = 214 days;
+    uint256 public constant FUNDING_PERIOD = 14 days;
     uint256 public constant CLIFF = 183 days;
     uint256 public constant VEST_PERIOD = 183 days;
     Vm vm = Vm(HEVM_ADDRESS);
@@ -46,14 +53,16 @@ contract PartnershipTest is DSTest {
             VEST_PERIOD,
             partners,
             allocations,
-            address(this)
+            GTC_TIMELOCK
         );
 
-        GTC.approve(address(this), 2**256 - 1);
+        vm.startPrank(GTC_TIMELOCK);
+        GTC.approve(address(this), 20000e18);
+        vm.stopPrank();
     }
 
     function testInitializeDeposit() public {
-        vm.expectEmit(true, true, false, true);
+        vm.expectEmit(false, false, false, false);
         emit TokenDeposited();
         partnership.initializeDeposit();
     }
