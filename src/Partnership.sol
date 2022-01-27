@@ -7,7 +7,9 @@ import {FixedPointMathLib} from "@solmate/utils/FixedPointMathLib.sol";
 error AlreadyDeposited();
 error OnlyDepositor();
 error FundingPeriodFinished();
+error FundingPeriodNotFinished();
 error PartnerAlreadyFunded();
+error OnlyPartner();
 
 /// @title Strategic Partnership
 /// @author Austin Green
@@ -131,17 +133,39 @@ contract Partnership {
         totalAllocated = sum;
     }
 
+    /*///////////////////////////////////////////////////////////////
+                              MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
     modifier onlyDepositor() {
         if (msg.sender != depositor) revert OnlyDepositor();
         _;
     }
 
     modifier onlyPartners() {
-        require(
-            partnerFundingAllocations[msg.sender] > 0,
-            "Not a valid partner"
-        );
+        if (partnerFundingAllocations[msg.sender] == 0) revert OnlyPartner();
         _;
+    }
+
+    /*///////////////////////////////////////////////////////////////
+                              FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Used to calculate the base unit for fixed point math
+    /// @dev Needed because native and funding tokens could have different decimals
+    /// @return Documents the return variables of a contract’s function state variable
+    function calculateBaseUnit(uint256 tokenADecimals, uint256 tokenBDecimals)
+        private
+        pure
+        returns (uint256)
+    {
+        unchecked {
+            uint256 z = tokenADecimals - tokenBDecimals;
+            if (z > tokenADecimals) {
+                z = tokenBDecimals - tokenADecimals;
+            }
+            return 10**z;
+        }
     }
 
     /// @notice Depositor calls this function to deposit native tokens and begin the funding period. Can only be called once.
@@ -149,7 +173,10 @@ contract Partnership {
     function initializeDeposit() external onlyDepositor {
         if (vestingStartDate != 0) revert AlreadyDeposited();
         vestingStartDate = block.timestamp + fundingPeriod;
-        uint256 depositAmount = totalAllocated.fdiv(exchangeRate, 1);
+        uint256 depositAmount = totalAllocated.fdiv(
+            exchangeRate,
+            calculateBaseUnit(nativeToken.decimals(), fundingToken.decimals())
+        );
         nativeToken.transferFrom(depositor, address(this), depositAmount);
         emit Deposited();
     }
@@ -169,19 +196,19 @@ contract Partnership {
         emit PartnershipFormed(msg.sender, fundingAmount);
     }
 
-    function receiveFunding() external onlyDepositor {
-        require(vestingStartDate != 0, "Funding has not begun.");
-        require(
-            block.timestamp > vestingStartDate,
-            "Funding period is still active."
-        );
+    function claimFunding() external {
+        if (block.timestamp <= vestingStartDate)
+            revert FundingPeriodNotFinished();
 
         uint256 fundingAmount = fundingToken.balanceOf(address(this));
         uint256 uninvestedAmount = totalAllocated - totalInvested;
         if (uninvestedAmount > 0) {
             uint256 unallocatedNativeToken = uninvestedAmount.fdiv(
                 exchangeRate,
-                100
+                calculateBaseUnit(
+                    nativeToken.decimals(),
+                    fundingToken.decimals()
+                )
             );
             nativeToken.transfer(depositor, unallocatedNativeToken);
         }
