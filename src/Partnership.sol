@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity 0.8.11;
 
-import {ERC20} from "@solmate/tokens/ERC20.sol";
+import {ERC20} from "@openzeppelin/token/ERC20/ERC20.sol";
 import {FixedPointMathLib} from "@solmate/utils/FixedPointMathLib.sol";
 
 error AlreadyDeposited();
+error OnlyDepositor();
+error FundingPeriodFinished();
+error PartnerAlreadyFunded();
 
 /// @title Strategic Partnership
 /// @author Austin Green
@@ -17,7 +20,7 @@ contract Partnership {
     //////////////////////////////////////////////////////////////*/
 
     event Deposited();
-    event Partnership(address indexed investor, uint256 amount);
+    event PartnershipFormed(address indexed investor, uint256 amount);
     event FundingReceived(address indexed depositor, uint256 fundingAmount);
 
     /*///////////////////////////////////////////////////////////////
@@ -119,7 +122,8 @@ contract Partnership {
         depositor = _depositor;
 
         uint256 sum = 0;
-        for (uint256 i = 0; i < partners.length; i++) {
+        uint256 length = partners.length;
+        for (uint256 i = 0; i < length; i++) {
             partnerFundingAllocations[partners[i]] = allocations[i];
             sum += allocations[i];
         }
@@ -128,7 +132,7 @@ contract Partnership {
     }
 
     modifier onlyDepositor() {
-        require(msg.sender == depositor, "Only depositor");
+        if (msg.sender != depositor) revert OnlyDepositor();
         _;
     }
 
@@ -140,28 +144,29 @@ contract Partnership {
         _;
     }
 
-    /// @notice Depositor calls this function to deposit natice tokens and begin the funding period. Can only be called once.
-    /// @dev Assumes depositor has approved this contract to sepnd at least the depositAmount.
+    /// @notice Depositor calls this function to deposit native tokens and begin the funding period. Can only be called once.
+    /// @dev Assumes depositor has called approve on the nativeToken with this contract's address and depositAmount.
     function initializeDeposit() external onlyDepositor {
         if (vestingStartDate != 0) revert AlreadyDeposited();
         vestingStartDate = block.timestamp + fundingPeriod;
-        uint256 depositAmount = totalAllocated.fdiv(exchangeRate, 100);
+        uint256 depositAmount = totalAllocated.fdiv(exchangeRate, 1);
         nativeToken.transferFrom(depositor, address(this), depositAmount);
         emit Deposited();
     }
 
+    /// @notice Partners call this during the funding period to provide their allocated amount of the fundingToken
+    /// @dev Assumes partner has called approve on the fundingToken with this contract's address and their allocation amount.
     function enterPartnership() external onlyPartners {
-        require(block.timestamp < vestingStartDate, "Not in funding period");
-        require(!hasPartnerInvested[msg.sender], "Already invested");
+        if (block.timestamp >= vestingStartDate) revert FundingPeriodFinished();
+        if (hasPartnerInvested[msg.sender]) revert PartnerAlreadyFunded();
         uint256 fundingAmount = partnerFundingAllocations[msg.sender];
         totalInvested += fundingAmount;
         partnerBalances[msg.sender] = fundingAmount;
         partnerLastWithdrawalDate[msg.sender] = vestingStartDate;
         hasPartnerInvested[msg.sender] = true;
 
-        /// @dev Assumes partner has approved this contract for depositAmount
         fundingToken.transferFrom(msg.sender, address(this), fundingAmount);
-        emit Partnership(msg.sender, fundingAmount);
+        emit PartnershipFormed(msg.sender, fundingAmount);
     }
 
     function receiveFunding() external onlyDepositor {
