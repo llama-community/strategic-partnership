@@ -213,7 +213,7 @@ contract Partnership {
             nativeToken.transfer(depositor, unallocatedNativeToken);
         }
         fundingToken.transfer(depositor, fundingAmount);
-        emit FundingReceived(msg.sender, fundingAmount);
+        emit FundingReceived(depositor, fundingAmount);
     }
 
     function getVestedTokens(address _partner) public view returns (uint256) {

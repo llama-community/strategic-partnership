@@ -12,6 +12,7 @@ contract PartnershipTest is DSTest {
 
     event Deposited();
     event PartnershipFormed(address indexed investor, uint256 amount);
+    event FundingReceived(address indexed depositor, uint256 fundingAmount);
 
     Vm vm = Vm(HEVM_ADDRESS);
 
@@ -253,12 +254,16 @@ contract PartnershipTest is DSTest {
             partnerAllocations[9].fdiv(EXCHANGE_RATE, BASE_UNIT)
         );
 
+        uint256 expectedUSDCTreasuryBalance = myPartnership.totalAllocated() -
+            partnerAllocations[9];
+
+        vm.expectEmit(true, true, false, false);
+        emit FundingReceived(GTC_TIMELOCK, expectedUSDCTreasuryBalance);
         myPartnership.claimFunding();
+
         uint256 expectedGTCTreasuryBalance = startingBalance -
             gtcAmount +
             partnerAllocations[9].fdiv(EXCHANGE_RATE, BASE_UNIT);
-        uint256 expectedUSDCTreasuryBalance = myPartnership.totalAllocated() -
-            partnerAllocations[9];
 
         // Unfunded GTC and USDC received is sent to GTC treasury
         assertEq(expectedGTCTreasuryBalance, GTC.balanceOf(GTC_TIMELOCK));
