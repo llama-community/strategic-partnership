@@ -158,7 +158,8 @@ contract Partnership {
             if (z > tokenADecimals) {
                 z = tokenBDecimals - tokenADecimals;
             }
-            return 10**z;
+            /// @dev add 2 to properly account for exchange rate decimals
+            return 10**(z + 2);
         }
     }
 

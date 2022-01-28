@@ -19,9 +19,9 @@ contract PartnershipTest is DSTest {
     ERC20 internal constant GTC = ERC20(0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F);
     ERC20 internal constant USDC = ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
     uint256 internal constant USDC_DECIMALS = 1e6;
-    uint256 internal constant BASE_UNIT = 1e12;
+    uint256 internal constant BASE_UNIT = 1e14;
     address internal constant GTC_TIMELOCK = 0x57a8865cfB1eCEf7253c27da6B4BC3dAEE5Be518;
-    uint256 internal constant EXCHANGE_RATE = 20;
+    uint256 internal constant EXCHANGE_RATE = 20_00;
     uint256 internal constant FUNDING_PERIOD = 14 days;
     uint256 internal constant CLIFF = 183 days;
     uint256 internal constant VEST_PERIOD = 183 days;
@@ -83,7 +83,7 @@ contract PartnershipTest is DSTest {
         vm.startPrank(GTC_TIMELOCK);
         // Amount of GTC sold is the USDC amount divided by exchange rate
         gtcAmount = myPartnership.totalAllocated();
-
+        emit log_named_uint("gtcAmount", gtcAmount);
         // Send tx's on behalf of the GTC treasury
         GTC.approve(address(myPartnership), gtcAmount);
 
