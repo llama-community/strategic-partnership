@@ -16,14 +16,11 @@ contract PartnershipTest is DSTest {
 
     Vm vm = Vm(HEVM_ADDRESS);
 
-    ERC20 internal constant GTC =
-        ERC20(0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F);
-    ERC20 internal constant USDC =
-        ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
+    ERC20 internal constant GTC = ERC20(0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F);
+    ERC20 internal constant USDC = ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
     uint256 internal constant USDC_DECIMALS = 1e6;
     uint256 internal constant BASE_UNIT = 1e12;
-    address internal constant GTC_TIMELOCK =
-        0x57a8865cfB1eCEf7253c27da6B4BC3dAEE5Be518;
+    address internal constant GTC_TIMELOCK = 0x57a8865cfB1eCEf7253c27da6B4BC3dAEE5Be518;
     uint256 internal constant EXCHANGE_RATE = 20;
     uint256 internal constant FUNDING_PERIOD = 14 days;
     uint256 internal constant CLIFF = 183 days;
@@ -85,10 +82,7 @@ contract PartnershipTest is DSTest {
     function approveAndInitialize() internal returns (uint256 gtcAmount) {
         vm.startPrank(GTC_TIMELOCK);
         // Amount of GTC sold is the USDC amount divided by exchange rate
-        gtcAmount = myPartnership.totalAllocated().fdiv(
-            EXCHANGE_RATE,
-            BASE_UNIT
-        );
+        gtcAmount = myPartnership.totalAllocated().fdiv(EXCHANGE_RATE, BASE_UNIT);
 
         // Send tx's on behalf of the GTC treasury
         GTC.approve(address(myPartnership), gtcAmount);
@@ -98,6 +92,10 @@ contract PartnershipTest is DSTest {
         emit Deposited();
         myPartnership.initializeDeposit();
         vm.stopPrank();
+    }
+
+    function convertFundingToNativeToken(uint256 fundingAmount) private pure returns (uint256) {
+        return fundingAmount.fdiv(EXCHANGE_RATE, BASE_UNIT);
     }
 
     function testConstructor() public {
@@ -112,10 +110,7 @@ contract PartnershipTest is DSTest {
         assertEq(usdcAmount, myPartnership.totalAllocated());
 
         // Assert that this was assigned correctly in the constructor
-        assertEq(
-            partnerAllocations[4],
-            myPartnership.partnerFundingAllocations(partnerAddresses[4])
-        );
+        assertEq(partnerAllocations[4], myPartnership.partnerFundingAllocations(partnerAddresses[4]));
     }
 
     function testInitializeDeposit() public {
@@ -123,10 +118,7 @@ contract PartnershipTest is DSTest {
         uint256 gtcAmount = approveAndInitialize();
 
         // Assert funding deadline/vesting start date is calculated correctly
-        assertEq(
-            block.timestamp + FUNDING_PERIOD,
-            myPartnership.vestingStartDate()
-        );
+        assertEq(block.timestamp + FUNDING_PERIOD, myPartnership.vestingStartDate());
 
         // Assert contract has correct GTC amount
         assertEq(gtcAmount, GTC.balanceOf(address(myPartnership)));
@@ -163,20 +155,15 @@ contract PartnershipTest is DSTest {
             emit PartnershipFormed(partner, allocation);
             myPartnership.enterPartnership();
 
-            assertEq(allocation, myPartnership.partnerBalances(partner));
-            assertEq(
-                myPartnership.vestingStartDate(),
-                myPartnership.partnerLastWithdrawalDate(partner)
-            );
+            assertEq(convertFundingToNativeToken(allocation), myPartnership.partnerBalances(partner));
+            assertEq(myPartnership.vestingStartDate(), myPartnership.partnerLastWithdrawalDate(partner));
 
             assertTrue(myPartnership.hasPartnerInvested(partner));
             vm.stopPrank();
         }
 
         // Contract has correct USDC balance
-        uint256 usdcSum = partnerAllocations[0] +
-            partnerAllocations[1] +
-            partnerAllocations[2];
+        uint256 usdcSum = partnerAllocations[0] + partnerAllocations[1] + partnerAllocations[2];
         assertEq(usdcSum, myPartnership.totalInvested());
 
         // Assert contract has correct USDC amount
@@ -202,11 +189,8 @@ contract PartnershipTest is DSTest {
             emit PartnershipFormed(partner, allocation);
             myPartnership.enterPartnership();
 
-            assertEq(allocation, myPartnership.partnerBalances(partner));
-            assertEq(
-                myPartnership.vestingStartDate(),
-                myPartnership.partnerLastWithdrawalDate(partner)
-            );
+            assertEq(convertFundingToNativeToken(allocation), myPartnership.partnerBalances(partner));
+            assertEq(myPartnership.vestingStartDate(), myPartnership.partnerLastWithdrawalDate(partner));
 
             assertTrue(myPartnership.hasPartnerInvested(partner));
             vm.stopPrank();
@@ -220,15 +204,18 @@ contract PartnershipTest is DSTest {
         myPartnership.enterPartnership();
     }
 
-    function testClaimFunding() public {
+    function testClaimFunding(uint256 x) public {
+        // Fuzz test conditions when 0-10 partners enter
+        uint256 funders = x % (partnerAddresses.length + 1);
+
         uint256 startingBalance = GTC.balanceOf(GTC_TIMELOCK);
 
         // Approve and intialize as the GTC treasury
         uint256 gtcAmount = approveAndInitialize();
 
-        // 9 partners enter partnership
+        // Partners enter partnership
         uint256 amountFunded = 0;
-        for (uint256 i = 0; i < 9; i++) {
+        for (uint256 i = 0; i < funders; i++) {
             vm.startPrank(partnerAddresses[i]);
             USDC.approve(address(myPartnership), partnerAllocations[i]);
             myPartnership.enterPartnership();
@@ -236,6 +223,8 @@ contract PartnershipTest is DSTest {
 
             amountFunded += partnerAllocations[i];
         }
+
+        uint256 notFunded = myPartnership.totalAllocated() - amountFunded;
 
         // Cannot claim funding before funding period ends
         vm.expectRevert(abi.encodeWithSignature("FundingPeriodNotFinished()"));
@@ -247,26 +236,69 @@ contract PartnershipTest is DSTest {
         // Fast forward past the funding period
         vm.warp(block.timestamp + 15 days);
 
-        emit log_named_uint("startingBalance", startingBalance);
-        emit log_named_uint("gtcAmount", gtcAmount);
-        emit log_named_uint(
-            "uninvestedAmount",
-            partnerAllocations[9].fdiv(EXCHANGE_RATE, BASE_UNIT)
-        );
-
-        uint256 expectedUSDCTreasuryBalance = myPartnership.totalAllocated() -
-            partnerAllocations[9];
+        uint256 expectedUSDCTreasuryBalance = myPartnership.totalAllocated() - notFunded;
 
         vm.expectEmit(true, true, false, false);
         emit FundingReceived(GTC_TIMELOCK, expectedUSDCTreasuryBalance);
         myPartnership.claimFunding();
 
-        uint256 expectedGTCTreasuryBalance = startingBalance -
-            gtcAmount +
-            partnerAllocations[9].fdiv(EXCHANGE_RATE, BASE_UNIT);
+        uint256 expectedGTCTreasuryBalance = startingBalance - gtcAmount + notFunded.fdiv(EXCHANGE_RATE, BASE_UNIT);
 
         // Unfunded GTC and USDC received is sent to GTC treasury
         assertEq(expectedGTCTreasuryBalance, GTC.balanceOf(GTC_TIMELOCK));
         assertEq(expectedUSDCTreasuryBalance, USDC.balanceOf(GTC_TIMELOCK));
+    }
+
+    function testGetClaimableTokens() public {
+        vm.expectRevert(abi.encodeWithSignature("OnlyPartner()"));
+        myPartnership.getClaimableTokens(address(this));
+
+        // Approve and intialize as the GTC treasury
+        approveAndInitialize();
+
+        // Funding has not started so no claimable tokens
+        assertEq(myPartnership.getClaimableTokens(partnerAddresses[0]), 0);
+
+        for (uint256 i = 0; i < 8; i++) {
+            vm.startPrank(partnerAddresses[i]);
+            USDC.approve(address(myPartnership), partnerAllocations[i]);
+            myPartnership.enterPartnership();
+            vm.stopPrank();
+        }
+
+        // Past funding period but before cliff
+        vm.warp(block.timestamp + 30 days);
+        assertEq(myPartnership.getClaimableTokens(partnerAddresses[0]), 0);
+
+        uint256 amtInGTC = partnerAllocations[0].fdiv(EXCHANGE_RATE, BASE_UNIT);
+        uint256 halfAmtInGTC = amtInGTC.fdiv(2, 1);
+
+        // Go to half way through
+        vm.warp(block.timestamp + 167 days);
+        assertEq(myPartnership.getClaimableTokens(partnerAddresses[0]), halfAmtInGTC);
+
+        // Ensure claimable amount is capped
+        vm.warp(block.timestamp + 500 days);
+        assertEq(myPartnership.getClaimableTokens(partnerAddresses[0]), amtInGTC);
+    }
+
+    function testClaimTokens() external {
+        // Approve and intialize as the GTC treasury
+        approveAndInitialize();
+
+        for (uint256 i = 0; i < 8; i++) {
+            vm.startPrank(partnerAddresses[i]);
+            USDC.approve(address(myPartnership), partnerAllocations[i]);
+            myPartnership.enterPartnership();
+            vm.stopPrank();
+        }
+
+        // Go to half way through
+        vm.warp(block.timestamp + FUNDING_PERIOD + CLIFF);
+
+        vm.prank(partnerAddresses[0]);
+        myPartnership.claimTokens();
+
+        assertEq(myPartnership.partnerBalances(partnerAddresses[0]), 250000000000000000000000);
     }
 }

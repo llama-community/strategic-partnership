@@ -10,6 +10,9 @@ error FundingPeriodFinished();
 error FundingPeriodNotFinished();
 error PartnerAlreadyFunded();
 error OnlyPartner();
+error FundingNotBegun();
+error VestingCliffNotMet();
+error AllocationCannotBeZero();
 
 /// @title Strategic Partnership
 /// @author Austin Green
@@ -67,7 +70,7 @@ contract Partnership {
     /// @notice Amount allocated per partner
     mapping(address => uint256) public partnerFundingAllocations;
 
-    /// @notice Remaining balance
+    /// @notice Remaining balance in native token
     mapping(address => uint256) public partnerBalances;
 
     /// @notice Did partner invest
@@ -108,10 +111,7 @@ contract Partnership {
         uint256[] memory _allocations,
         address _depositor
     ) {
-        require(
-            partners.length == allocations.length,
-            "Partners and allocations must have same length"
-        );
+        require(partners.length == allocations.length, "Partners and allocations must have same length");
 
         nativeToken = _nativeToken;
         fundingToken = _fundingToken;
@@ -126,6 +126,7 @@ contract Partnership {
         uint256 sum = 0;
         uint256 length = partners.length;
         for (uint256 i = 0; i < length; i++) {
+            if (allocations[i] == 0) revert AllocationCannotBeZero();
             partnerFundingAllocations[partners[i]] = allocations[i];
             sum += allocations[i];
         }
@@ -148,17 +149,17 @@ contract Partnership {
     }
 
     /*///////////////////////////////////////////////////////////////
-                              FUNCTIONS
+                           HELPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+
+    function convertFundingToNativeToken(uint256 fundingAmount) private view returns (uint256) {
+        return fundingAmount.fdiv(exchangeRate, calculateBaseUnit(nativeToken.decimals(), fundingToken.decimals()));
+    }
 
     /// @notice Used to calculate the base unit for fixed point math
     /// @dev Needed because native and funding tokens could have different decimals
     /// @return Documents the return variables of a contract’s function state variable
-    function calculateBaseUnit(uint256 tokenADecimals, uint256 tokenBDecimals)
-        private
-        pure
-        returns (uint256)
-    {
+    function calculateBaseUnit(uint256 tokenADecimals, uint256 tokenBDecimals) private pure returns (uint256) {
         unchecked {
             uint256 z = tokenADecimals - tokenBDecimals;
             if (z > tokenADecimals) {
@@ -168,15 +169,16 @@ contract Partnership {
         }
     }
 
+    /*///////////////////////////////////////////////////////////////
+                              FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
     /// @notice Depositor calls this function to deposit native tokens and begin the funding period. Can only be called once.
     /// @dev Assumes depositor has called approve on the nativeToken with this contract's address and depositAmount.
     function initializeDeposit() external onlyDepositor {
         if (vestingStartDate != 0) revert AlreadyDeposited();
         vestingStartDate = block.timestamp + fundingPeriod;
-        uint256 depositAmount = totalAllocated.fdiv(
-            exchangeRate,
-            calculateBaseUnit(nativeToken.decimals(), fundingToken.decimals())
-        );
+        uint256 depositAmount = convertFundingToNativeToken(totalAllocated);
         nativeToken.transferFrom(depositor, address(this), depositAmount);
         emit Deposited();
     }
@@ -188,7 +190,7 @@ contract Partnership {
         if (hasPartnerInvested[msg.sender]) revert PartnerAlreadyFunded();
         uint256 fundingAmount = partnerFundingAllocations[msg.sender];
         totalInvested += fundingAmount;
-        partnerBalances[msg.sender] = fundingAmount;
+        partnerBalances[msg.sender] = convertFundingToNativeToken(fundingAmount);
         partnerLastWithdrawalDate[msg.sender] = vestingStartDate;
         hasPartnerInvested[msg.sender] = true;
 
@@ -197,54 +199,44 @@ contract Partnership {
     }
 
     function claimFunding() external {
-        if (block.timestamp <= vestingStartDate)
-            revert FundingPeriodNotFinished();
+        if (block.timestamp <= vestingStartDate) revert FundingPeriodNotFinished();
 
         uint256 fundingAmount = fundingToken.balanceOf(address(this));
         uint256 uninvestedAmount = totalAllocated - totalInvested;
         if (uninvestedAmount > 0) {
-            uint256 unallocatedNativeToken = uninvestedAmount.fdiv(
-                exchangeRate,
-                calculateBaseUnit(
-                    nativeToken.decimals(),
-                    fundingToken.decimals()
-                )
-            );
+            uint256 unallocatedNativeToken = convertFundingToNativeToken(uninvestedAmount);
             nativeToken.transfer(depositor, unallocatedNativeToken);
         }
         fundingToken.transfer(depositor, fundingAmount);
         emit FundingReceived(depositor, fundingAmount);
     }
 
-    function getVestedTokens(address _partner) public view returns (uint256) {
-        require(hasPartnerInvested[_partner], "Account is not a partner.");
+    function getClaimableTokens(address _partner) public view returns (uint256) {
+        if (partnerFundingAllocations[_partner] == 0) revert OnlyPartner();
         uint256 startingDate = partnerLastWithdrawalDate[_partner];
-        require(startingDate != 0, "Funding has not begun.");
-        if (block.timestamp < timeUntilCliff + startingDate) return 0;
-        uint256 timeVested = block.timestamp - startingDate;
+        if (startingDate == 0 || block.timestamp < startingDate + timeUntilCliff) {
+            return 0;
+        }
+
+        uint256 fullyVested = vestingStartDate + timeUntilCliff + vestingPeriod;
+        uint256 vestEnd = fullyVested > block.timestamp ? block.timestamp : fullyVested;
+
+        uint256 timeVested = vestEnd - startingDate;
         uint256 lengthOfVesting = timeUntilCliff + vestingPeriod;
-        uint256 pctVested = timeVested.fdiv(lengthOfVesting, 1e18);
-        return partnerFundingAllocations[_partner].fmul(pctVested, 1e18);
+
+        uint256 pctVested = timeVested.fdiv(lengthOfVesting, 10**nativeToken.decimals());
+        uint256 fullyVestedNativeToken = convertFundingToNativeToken(partnerFundingAllocations[_partner]);
+        return fullyVestedNativeToken.fmul(pctVested, 1e18);
     }
 
-    function withdrawalVestedTokens() external onlyPartners {
-        require(vestingStartDate != 0, "Funding has not begun.");
-        require(
-            block.timestamp > timeUntilCliff + vestingStartDate,
-            "Cliff has not been met"
-        );
-        if (
-            block.timestamp > vestingStartDate + timeUntilCliff + vestingPeriod
-        ) {
-            uint256 remainingBalance = partnerBalances[msg.sender];
-            partnerLastWithdrawalDate[msg.sender] = block.timestamp;
-            partnerBalances[msg.sender] = 0;
-            nativeToken.transfer(msg.sender, remainingBalance);
-        } else {
-            uint256 amountVested = getVestedTokens(msg.sender);
-            partnerBalances[msg.sender] -= amountVested;
-            partnerLastWithdrawalDate[msg.sender] = block.timestamp;
-            nativeToken.transfer(msg.sender, amountVested);
-        }
+    function claimTokens() external onlyPartners {
+        if (vestingStartDate == 0) revert FundingNotBegun();
+        uint256 cliffDate = vestingStartDate + timeUntilCliff;
+        if (block.timestamp < cliffDate) revert VestingCliffNotMet();
+
+        uint256 amountClaimable = getClaimableTokens(msg.sender);
+        partnerBalances[msg.sender] -= amountClaimable;
+        partnerLastWithdrawalDate[msg.sender] = block.timestamp;
+        nativeToken.transfer(msg.sender, amountClaimable);
     }
 }
