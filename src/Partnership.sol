@@ -16,7 +16,7 @@ error AllocationCannotBeZero();
 
 /// @title Strategic Partnership
 /// @author Austin Green
-/// @notice Factory for creating and managing Strategic Partnerships.
+/// @notice Create and manage Strategic Partnerships.
 contract Partnership {
     using FixedPointMathLib for uint256;
 
@@ -38,23 +38,23 @@ contract Partnership {
     /// @notice The token partners exchange for the nativeToken.
     ERC20 public immutable fundingToken;
 
-    /// @notice The time period in which partners can invest.
+    /// @notice The time period in which partners can enter partnerships.
     uint256 public immutable fundingPeriod;
 
-    /// @notice Amount of time after vestingStartDate when vesting begins.
+    /// @notice Length of time between vestingStartDate and claiming is possible.
     uint256 public immutable timeUntilCliff;
 
     /// @notice The duration of vesting from timeUntilCliff to fully vested.
     uint256 public immutable vestingPeriod;
 
-    /// @notice Number of fundingTokens required for 1 nativeToken
+    /// @notice Number of fundingTokens required for 1 nativeToken.
     /// @dev A fixed point number multiplied by 100 to avoid decimals (for example 20 is 20_00).
     uint256 public immutable exchangeRate;
 
-    /// @notice DAO selling the token
+    /// @notice The entity depositing the nativeToken.
     address public immutable depositor;
 
-    /// @notice Sum of amounts
+    /// @notice Sum of nativeTokens allocated.
     uint256 public immutable totalAllocated;
 
     /*///////////////////////////////////////////////////////////////
@@ -64,25 +64,22 @@ contract Partnership {
     /// @notice Approved partners
     address[] public partners;
 
-    /// @notice Amount allocated per partner
+    /// @notice Amount allocated per partner in fundingTokens
     uint256[] public allocations;
 
-    /// @notice Amount allocated per partner
+    /// @notice Amount of fundingTokens allocated per partner
     mapping(address => uint256) public partnerFundingAllocations;
 
-    /// @notice Remaining balance in native token
+    /// @notice Remaining balance per partner in nativeToken
     mapping(address => uint256) public partnerBalances;
 
-    /// @notice Did partner invest
-    mapping(address => bool) public hasPartnerInvested;
-
-    /// @notice Starts at vesting date and is reset every time partner withdrawals
+    /// @notice Starts at vesting date and is reset every time partner withdraws
     mapping(address => uint256) public partnerLastWithdrawalDate;
 
     /// @notice When funding ends
     uint256 public vestingStartDate;
 
-    /// @notice The total that was actually invested
+    /// @notice Sum of fundingTokens sent.
     uint256 public totalInvested;
 
     /*///////////////////////////////////////////////////////////////
@@ -94,10 +91,10 @@ contract Partnership {
     /// @param _fundingToken The token partners exchange for the nativeToken.
     /// @param _exchangeRate Number of fundingTokens required for 1 nativeToken
     /// @param _fundingPeriod The time period in which partners can invest.
-    /// @param _timeUntilCliff The duration between fundingDeadline and vesting cliff.
+    /// @param _timeUntilCliff The duration between vestingStartDate and vesting cliff.
     /// @param _vestingPeriod The duration between vesting cliff and fully vested.
     /// @param _partners Addresses that can participate.
-    /// @param _allocations Max amount that partners can invest.
+    /// @param _allocations Amount that partners can invest.
     /// @param _depositor Account that will be depositing the native token.
     /// @dev Partners and amounts are matched by index
     constructor(
@@ -131,7 +128,7 @@ contract Partnership {
             sum += allocations[i];
         }
 
-        totalAllocated = sum;
+        totalAllocated = convertFundingToNativeToken(sum);
     }
 
     /*///////////////////////////////////////////////////////////////
@@ -149,12 +146,8 @@ contract Partnership {
     }
 
     /*///////////////////////////////////////////////////////////////
-                           HELPER FUNCTIONS
+                           VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-
-    function convertFundingToNativeToken(uint256 fundingAmount) private view returns (uint256) {
-        return fundingAmount.fdiv(exchangeRate, calculateBaseUnit(nativeToken.decimals(), fundingToken.decimals()));
-    }
 
     /// @notice Used to calculate the base unit for fixed point math
     /// @dev Needed because native and funding tokens could have different decimals
@@ -169,6 +162,10 @@ contract Partnership {
         }
     }
 
+    function convertFundingToNativeToken(uint256 fundingAmount) private view returns (uint256) {
+        return fundingAmount.fdiv(exchangeRate, calculateBaseUnit(nativeToken.decimals(), fundingToken.decimals()));
+    }
+
     /*///////////////////////////////////////////////////////////////
                               FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -178,8 +175,7 @@ contract Partnership {
     function initializeDeposit() external onlyDepositor {
         if (vestingStartDate != 0) revert AlreadyDeposited();
         vestingStartDate = block.timestamp + fundingPeriod;
-        uint256 depositAmount = convertFundingToNativeToken(totalAllocated);
-        nativeToken.transferFrom(depositor, address(this), depositAmount);
+        nativeToken.transferFrom(depositor, address(this), totalAllocated);
         emit Deposited();
     }
 
@@ -187,12 +183,11 @@ contract Partnership {
     /// @dev Assumes partner has called approve on the fundingToken with this contract's address and their allocation amount.
     function enterPartnership() external onlyPartners {
         if (block.timestamp >= vestingStartDate) revert FundingPeriodFinished();
-        if (hasPartnerInvested[msg.sender]) revert PartnerAlreadyFunded();
+        if (partnerBalances[msg.sender] != 0) revert PartnerAlreadyFunded();
         uint256 fundingAmount = partnerFundingAllocations[msg.sender];
         totalInvested += fundingAmount;
-        partnerBalances[msg.sender] = convertFundingToNativeToken(fundingAmount);
+        partnerBalances[msg.sender] = convertFundingToNativeToken(partnerFundingAllocations[msg.sender]);
         partnerLastWithdrawalDate[msg.sender] = vestingStartDate;
-        hasPartnerInvested[msg.sender] = true;
 
         fundingToken.transferFrom(msg.sender, address(this), fundingAmount);
         emit PartnershipFormed(msg.sender, fundingAmount);
@@ -202,10 +197,9 @@ contract Partnership {
         if (block.timestamp <= vestingStartDate) revert FundingPeriodNotFinished();
 
         uint256 fundingAmount = fundingToken.balanceOf(address(this));
-        uint256 uninvestedAmount = totalAllocated - totalInvested;
+        uint256 uninvestedAmount = totalAllocated - convertFundingToNativeToken(totalInvested);
         if (uninvestedAmount > 0) {
-            uint256 unallocatedNativeToken = convertFundingToNativeToken(uninvestedAmount);
-            nativeToken.transfer(depositor, unallocatedNativeToken);
+            nativeToken.transfer(depositor, uninvestedAmount);
         }
         fundingToken.transfer(depositor, fundingAmount);
         emit FundingReceived(depositor, fundingAmount);
@@ -225,8 +219,8 @@ contract Partnership {
         uint256 lengthOfVesting = timeUntilCliff + vestingPeriod;
 
         uint256 pctVested = timeVested.fdiv(lengthOfVesting, 10**nativeToken.decimals());
-        uint256 fullyVestedNativeToken = convertFundingToNativeToken(partnerFundingAllocations[_partner]);
-        return fullyVestedNativeToken.fmul(pctVested, 1e18);
+        uint256 claimableAmount = convertFundingToNativeToken(partnerFundingAllocations[_partner]);
+        return claimableAmount.fmul(pctVested, 1e18);
     }
 
     function claimTokens() external onlyPartners {
