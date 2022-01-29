@@ -4,19 +4,23 @@ pragma solidity 0.8.11;
 import {ERC20} from "@openzeppelin/token/ERC20/ERC20.sol";
 import {FixedPointMathLib} from "@solmate/utils/FixedPointMathLib.sol";
 
-error AlreadyDeposited();
-error OnlyDepositor();
-error FundingPeriodFinished();
-error FundingPeriodNotFinished();
-error PartnerAlreadyFunded();
-error OnlyPartner();
-error FundingNotBegun();
-error VestingCliffNotMet();
+/*///////////////////////////////////////////////////////////////
+                            ERRORS
+//////////////////////////////////////////////////////////////*/
+
 error AllocationCannotBeZero();
+error AlreadyDeposited();
+error PartnerPeriodEnded();
+error PartnershipNotStarted();
+error OnlyDepositor();
+error OnlyPartner();
+error OnlyPartnersWithBalance();
+error PartnerAlreadyFunded();
+error BeforeCliff();
 
 /// @title Strategic Partnership
 /// @author Austin Green
-/// @notice Create and manage Strategic Partnerships.
+/// @notice Create a Strategic Partnership.
 contract Partnership {
     using FixedPointMathLib for uint256;
 
@@ -24,85 +28,86 @@ contract Partnership {
                                EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event Deposited();
-    event PartnershipFormed(address indexed investor, uint256 amount);
-    event FundingReceived(address indexed depositor, uint256 fundingAmount);
+    event Deposited(address indexed depositor, uint256 depositTokenAmount);
+    event PartnershipFormed(address indexed partner, uint256 exchangeTokenAmount);
+    event FundingReceived(address indexed depositor, uint256 exchangeTokenAmount, uint256 depositTokenAmount);
+    event DepositTokenClaimed(address indexed partner, uint256 depositTokenAmount);
 
     /*///////////////////////////////////////////////////////////////
                                IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice The token that is being exchanged.
-    ERC20 public immutable nativeToken;
+    /// @notice The depositor deposits this token.
+    ERC20 public immutable depositToken;
 
-    /// @notice The token partners exchange for the nativeToken.
-    ERC20 public immutable fundingToken;
+    /// @notice Partners enter partnerships by providing this token for a claim on depositTokens.
+    ERC20 public immutable exchangeToken;
 
-    /// @notice The time period in which partners can enter partnerships.
-    uint256 public immutable fundingPeriod;
+    /// @notice The length of time in which partners can enter partnerships.
+    uint256 public immutable partnerPeriod;
 
-    /// @notice Length of time between vestingStartDate and claiming is possible.
-    uint256 public immutable timeUntilCliff;
+    /// @notice The length of time between partnershipStartedAt and the vesting cliff.
+    uint256 public immutable cliffPeriod;
 
-    /// @notice The duration of vesting from timeUntilCliff to fully vested.
+    /// @notice The length of time between the vesting cliff and end of vesting.
     uint256 public immutable vestingPeriod;
 
-    /// @notice Number of fundingTokens required for 1 nativeToken.
+    /// @notice Number of exchangeTokens required for 1 depositToken.
     /// @dev A fixed point number multiplied by 100 to avoid decimals (for example 20 is 20_00).
     uint256 public immutable exchangeRate;
 
-    /// @notice The entity depositing the nativeToken.
+    /// @notice The entity depositing the depositToken.
     address public immutable depositor;
 
-    /// @notice Sum of nativeTokens allocated.
+    /// @notice Sum of depositTokens allocated to partners.
     uint256 public immutable totalAllocated;
 
     /*///////////////////////////////////////////////////////////////
                                STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Approved partners
+    /// @notice Approved partners for strategic partnership.
     address[] public partners;
 
-    /// @notice Amount allocated per partner in fundingTokens
+    /// @notice The number of exchangeTokens allocated per partner (matched by index).
     uint256[] public allocations;
 
-    /// @notice Amount of fundingTokens allocated per partner
-    mapping(address => uint256) public partnerFundingAllocations;
+    /// @notice A partner's exchange token allocation.
+    mapping(address => uint256) public partnerExchangeAllocations;
 
-    /// @notice Remaining balance per partner in nativeToken
+    /// @notice A partner's remaing balance of allocated but not claimed depositTokens.
     mapping(address => uint256) public partnerBalances;
 
-    /// @notice Starts at vesting date and is reset every time partner withdraws
-    mapping(address => uint256) public partnerLastWithdrawalDate;
+    /// @notice Initially set at partnershipStartedAt and is updated every time partner successfully claims.
+    mapping(address => uint256) public lastWithdrawnAt;
 
-    /// @notice When funding ends
-    uint256 public vestingStartDate;
+    /// @notice When the partnership begins. Equal to the time of deposit + partnerPeriod.
+    uint256 public partnershipStartedAt;
 
-    /// @notice Sum of fundingTokens sent.
-    uint256 public totalInvested;
+    /// @notice Sum of exchangeTokens sent during partnerPeriod.
+    uint256 public totalExchanged;
 
     /*///////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Creates a new Strategic Partnership contract.
-    /// @param _nativeToken The token that is being exchanged.
-    /// @param _fundingToken The token partners exchange for the nativeToken.
-    /// @param _exchangeRate Number of fundingTokens required for 1 nativeToken
-    /// @param _fundingPeriod The time period in which partners can invest.
-    /// @param _timeUntilCliff The duration between vestingStartDate and vesting cliff.
-    /// @param _vestingPeriod The duration between vesting cliff and fully vested.
-    /// @param _partners Addresses that can participate.
-    /// @param _allocations Amount that partners can invest.
-    /// @param _depositor Account that will be depositing the native token.
+    /// @param _depositToken The token that is being exchanged.
+    /// @param _exchangeToken The token partners exchange for the depositToken.
+    /// @param _exchangeRate Number of exchangeTokens required for 1 depositToken
+    /// @param _partnerPeriod The length of time in which partners can enter partnerships.
+    /// @param _cliffPeriod The length of time between partnershipStartedAt and the vesting cliff.
+    /// @param _vestingPeriod The length of time between the vesting cliff and end of vesting.
+    /// @param _partners Addresses approved for strategic partnerships.
+    /// @param _allocations Number of exchangeTokens allocated to each partner.
+    /// @param _depositor Address that will be depositing the native token.
     /// @dev Partners and amounts are matched by index
     constructor(
-        ERC20 _nativeToken,
-        ERC20 _fundingToken,
+        ERC20 _depositToken,
+        ERC20 _exchangeToken,
         uint256 _exchangeRate,
-        uint256 _fundingPeriod,
-        uint256 _timeUntilCliff,
+        uint256 _partnerPeriod,
+        uint256 _cliffPeriod,
         uint256 _vestingPeriod,
         address[] memory _partners,
         uint256[] memory _allocations,
@@ -110,11 +115,11 @@ contract Partnership {
     ) {
         require(partners.length == allocations.length, "Partners and allocations must have same length");
 
-        nativeToken = _nativeToken;
-        fundingToken = _fundingToken;
+        depositToken = _depositToken;
+        exchangeToken = _exchangeToken;
         exchangeRate = _exchangeRate;
-        fundingPeriod = _fundingPeriod;
-        timeUntilCliff = _timeUntilCliff;
+        partnerPeriod = _partnerPeriod;
+        cliffPeriod = _cliffPeriod;
         vestingPeriod = _vestingPeriod;
         partners = _partners;
         allocations = _allocations;
@@ -124,11 +129,11 @@ contract Partnership {
         uint256 length = partners.length;
         for (uint256 i = 0; i < length; i++) {
             if (allocations[i] == 0) revert AllocationCannotBeZero();
-            partnerFundingAllocations[partners[i]] = allocations[i];
+            partnerExchangeAllocations[partners[i]] = allocations[i];
             sum += allocations[i];
         }
 
-        totalAllocated = convertFundingToNativeToken(sum);
+        totalAllocated = exchangeToDeposit(sum);
     }
 
     /*///////////////////////////////////////////////////////////////
@@ -141,7 +146,7 @@ contract Partnership {
     }
 
     modifier onlyPartners() {
-        if (partnerFundingAllocations[msg.sender] == 0) revert OnlyPartner();
+        if (partnerExchangeAllocations[msg.sender] == 0) revert OnlyPartner();
         _;
     }
 
@@ -158,13 +163,34 @@ contract Partnership {
             if (z > tokenADecimals) {
                 z = tokenBDecimals - tokenADecimals;
             }
-            /// @dev add 2 to properly account for exchange rate decimals
+
+            /// @dev add 2 to properly account for exchangeRate decimals
             return 10**(z + 2);
         }
     }
 
-    function convertFundingToNativeToken(uint256 fundingAmount) private view returns (uint256) {
-        return fundingAmount.fdiv(exchangeRate, calculateBaseUnit(nativeToken.decimals(), fundingToken.decimals()));
+    function exchangeToDeposit(uint256 _exchangeTokens) private view returns (uint256) {
+        return _exchangeTokens.fdiv(exchangeRate, calculateBaseUnit(depositToken.decimals(), exchangeToken.decimals()));
+    }
+
+    /// @notice Calculate amount of depositTokens that a partner has available to claim.
+    function _getClaimableTokens(address _partner) private view returns (uint256) {
+        if (partnerExchangeAllocations[_partner] == 0 || partnerBalances[_partner] == 0) return 0;
+        uint256 startingDate = lastWithdrawnAt[_partner];
+        if (block.timestamp < startingDate + cliffPeriod) return 0;
+
+        uint256 fullyVested = partnershipStartedAt + cliffPeriod + vestingPeriod;
+        uint256 endDate = fullyVested > block.timestamp ? block.timestamp : fullyVested;
+        uint256 timeVested = endDate - startingDate;
+        uint256 lengthOfVesting = cliffPeriod + vestingPeriod;
+
+        uint256 pctVested = timeVested.fdiv(lengthOfVesting, 10**depositToken.decimals());
+        uint256 claimableAmount = exchangeToDeposit(partnerExchangeAllocations[_partner]);
+        return claimableAmount.fmul(pctVested, 10**depositToken.decimals());
+    }
+
+    function getClaimableTokens(address _partner) public view returns (uint256) {
+        return _getClaimableTokens(_partner);
     }
 
     /*///////////////////////////////////////////////////////////////
@@ -172,66 +198,58 @@ contract Partnership {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Depositor calls this function to deposit native tokens and begin the funding period. Can only be called once.
-    /// @dev Assumes depositor has called approve on the nativeToken with this contract's address and depositAmount.
-    function initializeDeposit() external onlyDepositor {
-        if (vestingStartDate != 0) revert AlreadyDeposited();
-        vestingStartDate = block.timestamp + fundingPeriod;
-        nativeToken.transferFrom(depositor, address(this), totalAllocated);
-        emit Deposited();
+    /// @dev Assumes depositor has called approve on the depositToken with this contract's address and depositAmount.
+    function deposit() external onlyDepositor {
+        if (partnershipStartedAt != 0) revert AlreadyDeposited();
+
+        partnershipStartedAt = block.timestamp + partnerPeriod;
+        depositToken.transferFrom(depositor, address(this), totalAllocated);
+
+        emit Deposited(msg.sender, totalAllocated);
     }
 
-    /// @notice Partners call this during the funding period to provide their allocated amount of the fundingToken
-    /// @dev Assumes partner has called approve on the fundingToken with this contract's address and their allocation amount.
+    /// @notice For partners to provide their allocated amount of the exchangeToken between when the deposit is made and partnershipStartedAt.
+    /// @dev Assumes partner has called approve on the exchangeToken with this contract's address and their allocation amount.
     function enterPartnership() external onlyPartners {
-        if (block.timestamp >= vestingStartDate) revert FundingPeriodFinished();
+        if (block.timestamp >= partnershipStartedAt) revert PartnerPeriodEnded();
         if (partnerBalances[msg.sender] != 0) revert PartnerAlreadyFunded();
-        uint256 fundingAmount = partnerFundingAllocations[msg.sender];
-        totalInvested += fundingAmount;
-        partnerBalances[msg.sender] = convertFundingToNativeToken(partnerFundingAllocations[msg.sender]);
-        partnerLastWithdrawalDate[msg.sender] = vestingStartDate;
 
-        fundingToken.transferFrom(msg.sender, address(this), fundingAmount);
+        uint256 fundingAmount = partnerExchangeAllocations[msg.sender];
+        totalExchanged += fundingAmount;
+        partnerBalances[msg.sender] = exchangeToDeposit(fundingAmount);
+        lastWithdrawnAt[msg.sender] = partnershipStartedAt;
+
+        exchangeToken.transferFrom(msg.sender, address(this), fundingAmount);
+
         emit PartnershipFormed(msg.sender, fundingAmount);
     }
 
-    function claimFunding() external {
-        if (block.timestamp <= vestingStartDate) revert FundingPeriodNotFinished();
+    /// @notice Sends unallocated depositTokens and all exchangeTokens to the depositor.
+    function claimExchangeTokens() external {
+        if (block.timestamp < partnershipStartedAt) revert PartnershipNotStarted();
 
-        uint256 fundingAmount = fundingToken.balanceOf(address(this));
-        uint256 uninvestedAmount = totalAllocated - convertFundingToNativeToken(totalInvested);
-        if (uninvestedAmount > 0) {
-            nativeToken.transfer(depositor, uninvestedAmount);
+        uint256 amount = exchangeToken.balanceOf(address(this));
+        uint256 unfundedAmount = totalAllocated - exchangeToDeposit(totalExchanged);
+
+        if (unfundedAmount != 0) {
+            depositToken.transfer(depositor, unfundedAmount);
         }
-        fundingToken.transfer(depositor, fundingAmount);
-        emit FundingReceived(depositor, fundingAmount);
+        exchangeToken.transfer(depositor, amount);
+
+        emit FundingReceived(depositor, amount, unfundedAmount);
     }
 
-    function getClaimableTokens(address _partner) public view returns (uint256) {
-        if (partnerFundingAllocations[_partner] == 0) revert OnlyPartner();
-        uint256 startingDate = partnerLastWithdrawalDate[_partner];
-        if (startingDate == 0 || block.timestamp < startingDate + timeUntilCliff) {
-            return 0;
-        }
+    /// @notice For partners to claim vested depositTokens
+    function claimDepositTokens() external onlyPartners {
+        uint256 cliffAt = partnershipStartedAt + cliffPeriod;
+        if (block.timestamp < cliffAt) revert BeforeCliff();
+        if (partnerBalances[msg.sender] == 0) revert OnlyPartnersWithBalance();
 
-        uint256 fullyVested = vestingStartDate + timeUntilCliff + vestingPeriod;
-        uint256 vestEnd = fullyVested > block.timestamp ? block.timestamp : fullyVested;
-
-        uint256 timeVested = vestEnd - startingDate;
-        uint256 lengthOfVesting = timeUntilCliff + vestingPeriod;
-
-        uint256 pctVested = timeVested.fdiv(lengthOfVesting, 10**nativeToken.decimals());
-        uint256 claimableAmount = convertFundingToNativeToken(partnerFundingAllocations[_partner]);
-        return claimableAmount.fmul(pctVested, 1e18);
-    }
-
-    function claimTokens() external onlyPartners {
-        if (vestingStartDate == 0) revert FundingNotBegun();
-        uint256 cliffDate = vestingStartDate + timeUntilCliff;
-        if (block.timestamp < cliffDate) revert VestingCliffNotMet();
-
-        uint256 amountClaimable = getClaimableTokens(msg.sender);
+        uint256 amountClaimable = _getClaimableTokens(msg.sender);
         partnerBalances[msg.sender] -= amountClaimable;
-        partnerLastWithdrawalDate[msg.sender] = block.timestamp;
-        nativeToken.transfer(msg.sender, amountClaimable);
+        lastWithdrawnAt[msg.sender] = block.timestamp;
+        depositToken.transfer(msg.sender, amountClaimable);
+
+        emit DepositTokenClaimed(msg.sender, amountClaimable);
     }
 }
