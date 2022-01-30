@@ -62,6 +62,9 @@ contract Partnership {
     /// @notice Sum of depositTokens allocated to partners.
     uint256 public immutable totalAllocated;
 
+    /// @notice Base unit for fixed point math. Accounts for difference in decimals between deposit and exchange tokens.
+    uint256 public immutable BASE_UNIT;
+
     /*///////////////////////////////////////////////////////////////
                                STORAGE
     //////////////////////////////////////////////////////////////*/
@@ -125,6 +128,19 @@ contract Partnership {
         allocations = _allocations;
         depositor = _depositor;
 
+        // Used to calculate the base unit for fixed point math
+        // Needed because native and funding tokens could have different decimals
+        unchecked {
+            uint256 z = depositToken.decimals() - exchangeToken.decimals();
+            if (z > depositToken.decimals()) {
+                z = exchangeToken.decimals() - depositToken.decimals();
+            }
+
+            // add 2 to properly account for exchangeRate decimals
+            BASE_UNIT = 10**(z + 2);
+        }
+
+        // Assign totalAllocated and partnerExchangeAllocations
         uint256 sum = 0;
         uint256 length = partners.length;
         for (uint256 i = 0; i < length; i++) {
@@ -132,7 +148,6 @@ contract Partnership {
             partnerExchangeAllocations[partners[i]] = allocations[i];
             sum += allocations[i];
         }
-
         totalAllocated = exchangeToDeposit(sum);
     }
 
@@ -154,23 +169,8 @@ contract Partnership {
                            VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Used to calculate the base unit for fixed point math
-    /// @dev Needed because native and funding tokens could have different decimals
-    /// @return Documents the return variables of a contract’s function state variable
-    function calculateBaseUnit(uint256 tokenADecimals, uint256 tokenBDecimals) private pure returns (uint256) {
-        unchecked {
-            uint256 z = tokenADecimals - tokenBDecimals;
-            if (z > tokenADecimals) {
-                z = tokenBDecimals - tokenADecimals;
-            }
-
-            /// @dev add 2 to properly account for exchangeRate decimals
-            return 10**(z + 2);
-        }
-    }
-
     function exchangeToDeposit(uint256 _exchangeTokens) private view returns (uint256) {
-        return _exchangeTokens.fdiv(exchangeRate, calculateBaseUnit(depositToken.decimals(), exchangeToken.decimals()));
+        return _exchangeTokens.fdiv(exchangeRate, BASE_UNIT);
     }
 
     /// @notice Calculate amount of depositTokens that a partner has available to claim.

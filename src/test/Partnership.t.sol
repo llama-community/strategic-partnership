@@ -15,6 +15,7 @@ contract PartnershipTest is DSTest {
     event FundingReceived(address indexed depositor, uint256 exchangeTokenAmount, uint256 depositTokenAmount);
     event DepositTokenClaimed(address indexed partner, uint256 depositTokenAmount);
 
+    Partnership myPartnership;
     Vm vm = Vm(HEVM_ADDRESS);
     ERC20 internal constant GTC = ERC20(0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F);
     ERC20 internal constant USDC = ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
@@ -49,8 +50,6 @@ contract PartnershipTest is DSTest {
         100_000 * USDC_DECIMALS,
         100_000 * USDC_DECIMALS
     ];
-
-    Partnership myPartnership;
 
     function setUp() public {
         address[] memory partners = partnerAddresses;
@@ -107,6 +106,10 @@ contract PartnershipTest is DSTest {
         assertEq(partnerAllocations[4], myPartnership.partnerExchangeAllocations(partnerAddresses[4]));
     }
 
+    /*///////////////////////////////////////////////////////////////
+                        DEPOSIT TESTS
+    //////////////////////////////////////////////////////////////*/
+
     function testDeposit() public {
         // Approve and intialize as the GTC treasury
         uint256 gtcAmount = approveAndInitialize();
@@ -128,6 +131,10 @@ contract PartnershipTest is DSTest {
         vm.expectRevert(abi.encodeWithSignature("OnlyDepositor()"));
         myPartnership.deposit();
     }
+
+    /*///////////////////////////////////////////////////////////////
+                        PARTNERSHIPS TESTS
+    //////////////////////////////////////////////////////////////*/
 
     function formPartnership(address _partner, uint256 _alloc) private {
         vm.startPrank(_partner);
@@ -182,6 +189,10 @@ contract PartnershipTest is DSTest {
         vm.expectRevert(abi.encodeWithSignature("PartnerPeriodEnded()"));
         myPartnership.enterPartnership();
     }
+
+    /*///////////////////////////////////////////////////////////////
+                        CLAIMING TESTS
+    //////////////////////////////////////////////////////////////*/
 
     function testClaimExchangeTokens(uint256 x) public {
         // Fuzz test conditions when 0-10 partners enter

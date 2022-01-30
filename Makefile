@@ -11,4 +11,4 @@ test     :; forge test --fork-url ${FORK_URL} --fork-block-number ${BLOCK_NUMBER
 match    :; forge test --fork-url ${FORK_URL} --fork-block-number ${BLOCK_NUMBER} -m ${MATCH} -vvv
 trace    :; forge test --fork-url ${FORK_URL} --fork-block-number ${BLOCK_NUMBER} -vvvvv
 clean    :; forge clean
-snapshot :; forge snapshot
+snapshot :; forge snapshot --fork-url ${FORK_URL} --fork-block-number ${BLOCK_NUMBER}
