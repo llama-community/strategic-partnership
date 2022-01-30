@@ -10,6 +10,7 @@ import {FixedPointMathLib} from "@solmate/utils/FixedPointMathLib.sol";
 
 error AllocationCannotBeZero();
 error AlreadyDeposited();
+error DuplicatePartner();
 error PartnerPeriodEnded();
 error PartnershipNotStarted();
 error OnlyDepositor();
@@ -145,6 +146,7 @@ contract Partnership {
         uint256 length = partners.length;
         for (uint256 i = 0; i < length; i++) {
             if (allocations[i] == 0) revert AllocationCannotBeZero();
+            if (partnerExchangeAllocations[partners[i]] != 0) revert DuplicatePartner();
             partnerExchangeAllocations[partners[i]] = allocations[i];
             sum += allocations[i];
         }
