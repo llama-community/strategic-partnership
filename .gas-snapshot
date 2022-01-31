@@ -1,5 +1,5 @@
 PartnershipTest:testClaimDepositTokens() (gas: 1249430)
-PartnershipTest:testClaimExchangeTokens(uint256) (runs: 256, μ: 521441, ~: 516527)
+PartnershipTest:testClaimExchangeTokens(uint256) (runs: 256, μ: 508245, ~: 516527)
 PartnershipTest:testConstructor() (gas: 7857)
 PartnershipTest:testDeposit() (gas: 81908)
 PartnershipTest:testEnterPartnership() (gas: 828609)
