@@ -70,12 +70,6 @@ contract Partnership {
                                STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Approved partners for strategic partnership.
-    address[] public partners;
-
-    /// @notice The number of exchangeTokens allocated per partner (matched by index).
-    uint256[] public allocations;
-
     /// @notice A partner's exchange token allocation.
     mapping(address => uint256) public partnerExchangeAllocations;
 
@@ -117,7 +111,7 @@ contract Partnership {
         uint256[] memory _allocations,
         address _depositor
     ) {
-        require(partners.length == allocations.length, "Partners and allocations must have same length");
+        require(_partners.length == _allocations.length, "Partners and allocations must have same length");
 
         depositToken = _depositToken;
         exchangeToken = _exchangeToken;
@@ -125,8 +119,6 @@ contract Partnership {
         partnerPeriod = _partnerPeriod;
         cliffPeriod = _cliffPeriod;
         vestingPeriod = _vestingPeriod;
-        partners = _partners;
-        allocations = _allocations;
         depositor = _depositor;
 
         // Used to calculate the base unit for fixed point math
@@ -143,12 +135,12 @@ contract Partnership {
 
         // Assign totalAllocated and partnerExchangeAllocations
         uint256 sum = 0;
-        uint256 length = partners.length;
+        uint256 length = _partners.length;
         for (uint256 i = 0; i < length; i++) {
-            if (allocations[i] == 0) revert AllocationCannotBeZero();
-            if (partnerExchangeAllocations[partners[i]] != 0) revert DuplicatePartner();
-            partnerExchangeAllocations[partners[i]] = allocations[i];
-            sum += allocations[i];
+            if (_allocations[i] == 0) revert AllocationCannotBeZero();
+            if (partnerExchangeAllocations[_partners[i]] != 0) revert DuplicatePartner();
+            partnerExchangeAllocations[_partners[i]] = _allocations[i];
+            sum += _allocations[i];
         }
         totalAllocated = exchangeToDeposit(sum);
     }
