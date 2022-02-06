@@ -183,7 +183,7 @@ contract Partnership {
         return claimableAmount.fmul(pctVested, 10**depositToken.decimals());
     }
 
-    function getClaimableTokens(address _partner) public view returns (uint256) {
+    function getClaimableTokens(address _partner) external view returns (uint256) {
         return _getClaimableTokens(_partner);
     }
 
