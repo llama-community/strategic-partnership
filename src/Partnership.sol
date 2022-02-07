@@ -10,6 +10,7 @@ import {FixedPointMathLib} from "@solmate/utils/FixedPointMathLib.sol";
 
 error AllocationCannotBeZero();
 error AlreadyDeposited();
+error AlreadyDelegated();
 error DuplicatePartner();
 error PartnerPeriodEnded();
 error PartnershipNotStarted();
@@ -78,6 +79,9 @@ contract Partnership {
 
     /// @notice Initially set at partnershipStartedAt and is updated every time partner successfully claims.
     mapping(address => uint256) public lastWithdrawnAt;
+
+    /// @notice Indicates whether a partner has delegated themselves voting rights.
+    mapping(address => bool) public hasDelegated;
 
     /// @notice When the partnership begins. Equal to the time of deposit + partnerPeriod.
     uint256 public partnershipStartedAt;
@@ -245,5 +249,13 @@ contract Partnership {
         depositToken.transfer(msg.sender, amountClaimable);
 
         emit DepositTokenClaimed(msg.sender, amountClaimable);
+    }
+
+    /// @notice For partners to delegate voting rights of all depositTokens
+    function delegate() external onlyPartners {
+        if (hasDelegated[msg.sender]) revert AlreadyDelegated();
+        if (block.timestamp < partnershipStartedAt) revert PartnershipNotStarted();
+
+        uint256 votingRights = partnerBalances[msg.sender];
     }
 }
